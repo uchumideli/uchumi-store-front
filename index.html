@@ -1214,6 +1214,31 @@ let SELECTED_BRANCH = null;
 let CUSTOMER_COORDS = null; // {lat, lng} — only set if the customer granted location access
 const KES_PER_KM = 50;
 
+// 2-hour delivery windows, 8am to 10pm — must exactly match VALID_DELIVERY_SLOTS
+// in the backend's routes/orders.js, since the server re-validates whatever
+// gets submitted here.
+const DELIVERY_SLOTS = [
+  { value: '08:00-10:00', label: '8:00 AM – 10:00 AM' },
+  { value: '10:00-12:00', label: '10:00 AM – 12:00 PM' },
+  { value: '12:00-14:00', label: '12:00 PM – 2:00 PM' },
+  { value: '14:00-16:00', label: '2:00 PM – 4:00 PM' },
+  { value: '16:00-18:00', label: '4:00 PM – 6:00 PM' },
+  { value: '18:00-20:00', label: '6:00 PM – 8:00 PM' },
+  { value: '20:00-22:00', label: '8:00 PM – 10:00 PM' },
+];
+
+// Mirrors the backend's isSlotStillAvailable() exactly, so a slot never
+// shows as pickable here only to be rejected once the order is submitted.
+// Nairobi is a fixed UTC+3 with no daylight saving.
+function isSlotAvailableNow(slotValue){
+  const [, endTime] = slotValue.split('-');
+  const [endHour, endMin] = endTime.split(':').map(Number);
+  const now = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const nowMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const slotEndMinutes = endHour * 60 + endMin;
+  return nowMinutes <= slotEndMinutes;
+}
+
 // Straight-line distance in km — mirrors the backend's calculation exactly,
 // so the estimate shown here matches what the order will actually cost.
 function haversineKm(lat1, lng1, lat2, lng2){
@@ -1741,20 +1766,40 @@ function showModal(stage, payload){
       <div class="field"><label>Full name</label><input id="custName" placeholder="Jane Wanjiku" value="${CUSTOMER_INFO ? (CUSTOMER_INFO.first_name+' '+CUSTOMER_INFO.last_name) : ''}"></div>
       <div class="field"><label>Delivery address</label><input id="custAddress" placeholder="Building, street, area"></div>
       <div class="field"><label>M-Pesa number</label><input id="custPhone" placeholder="07XX XXX XXX" value="${CUSTOMER_INFO ? (CUSTOMER_INFO.phone||'') : ''}"></div>
+      <div class="field">
+        <label>Delivery time</label>
+        <select id="custDeliverySlot">
+          ${DELIVERY_SLOTS.map(s => {
+            const available = isSlotAvailableNow(s.value);
+            return `<option value="${s.value}" ${available ? '' : 'disabled'}>${s.label}${available ? '' : ' — unavailable (past)'}</option>`;
+          }).join('')}
+        </select>
+      </div>
       <p class="vat-note" id="checkoutEstimate" style="margin:-4px 0 14px;">${estimate}</p>
       <div class="login-error" id="checkoutError" style="display:none;background:#FCEBEB;color:#A32D2D;padding:9px 12px;border-radius:8px;font-size:12.5px;margin-bottom:12px;"></div>
       <button class="close-modal-btn" style="background:var(--red);" id="payBtn">Pay with M-Pesa</button>
       <button class="close-modal-btn" id="cancelBtn" style="background:none;color:var(--ink-soft);border:1.5px solid var(--line);">Cancel</button>
     `;
+    // Auto-select the first still-available slot as the default, rather
+    // than leaving a disabled/past one selected.
+    const slotSelect = document.getElementById('custDeliverySlot');
+    const firstAvailable = DELIVERY_SLOTS.find(s => isSlotAvailableNow(s.value));
+    if(firstAvailable) slotSelect.value = firstAvailable.value;
     document.getElementById('cancelBtn').addEventListener('click', closeModal);
     document.getElementById('payBtn').addEventListener('click', async ()=>{
       const name = document.getElementById('custName').value.trim();
       const phone = document.getElementById('custPhone').value.trim();
       const address = document.getElementById('custAddress').value.trim();
+      const deliverySlot = document.getElementById('custDeliverySlot').value;
       const errEl = document.getElementById('checkoutError');
       errEl.style.display = 'none';
       if(!name || !phone){ alert('Please enter your name and M-Pesa number.'); return; }
       if(!SELECTED_BRANCH){ alert('Please choose a branch first.'); return; }
+      if(!deliverySlot || !isSlotAvailableNow(deliverySlot)){
+        errEl.textContent = 'That delivery time has already passed — please choose another slot.';
+        errEl.style.display = 'block';
+        return;
+      }
 
       const payBtn = document.getElementById('payBtn');
       payBtn.disabled = true;
@@ -1789,10 +1834,20 @@ function showModal(stage, payload){
             customer_lng: CUSTOMER_COORDS.lng,
             delivery_address: address,
             phone,
-            customer_name: name
+            customer_name: name,
+            delivery_slot: deliverySlot
           })
         });
-        if(res.ok){ orderResult = await res.json(); }
+        if(res.ok){
+          orderResult = await res.json();
+        } else {
+          const errData = await res.json().catch(()=>({}));
+          errEl.textContent = errData.error || 'Could not place your order — please try again.';
+          errEl.style.display = 'block';
+          payBtn.disabled = false;
+          payBtn.textContent = 'Pay with M-Pesa';
+          return;
+        }
       }catch(e){
         // Backend unreachable — fall through to demo mode in the confirm step below.
       }
