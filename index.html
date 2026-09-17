@@ -1840,6 +1840,17 @@ let CUSTOMER_TOKEN = null;
 let CUSTOMER_INFO = null;
 let pendingCheckoutAfterAuth = false;
 
+// Stores the logged-in customer's session both in memory and in the
+// browser's own storage, so a page refresh doesn't sign them out.
+function setCustomerSession(token, customer){
+  CUSTOMER_TOKEN = token;
+  CUSTOMER_INFO = customer;
+  try{
+    localStorage.setItem('uchumi_customer_token', token);
+  }catch(e){ /* private browsing or storage disabled — session just won't survive a refresh */ }
+  updateAccountButton();
+}
+
 function updateAccountButton(){
   const label = document.getElementById('accountLabel');
   if(CUSTOMER_INFO){
@@ -1871,6 +1882,7 @@ function showAccountModal(stage, payload){
     document.getElementById('logoutBtn').addEventListener('click', ()=>{
       CUSTOMER_TOKEN = null;
       CUSTOMER_INFO = null;
+      try{ localStorage.removeItem('uchumi_customer_token'); }catch(e){}
       updateAccountButton();
       closeAccountModal();
     });
@@ -2046,9 +2058,7 @@ async function doCustomerLogin(){
       btn.disabled = false; btn.textContent = 'Log in';
       return;
     }
-    CUSTOMER_TOKEN = data.token;
-    CUSTOMER_INFO = data.customer;
-    updateAccountButton();
+    setCustomerSession(data.token, data.customer);
     closeAccountModal();
     if(pendingCheckoutAfterAuth){
       pendingCheckoutAfterAuth = false;
@@ -2096,9 +2106,7 @@ async function doCustomerRegister(){
       btn.disabled = false; btn.textContent = 'Register account';
       return;
     }
-    CUSTOMER_TOKEN = data.token;
-    CUSTOMER_INFO = data.customer;
-    updateAccountButton();
+    setCustomerSession(data.token, data.customer);
     closeAccountModal();
     if(pendingCheckoutAfterAuth){
       pendingCheckoutAfterAuth = false;
@@ -2401,6 +2409,34 @@ document.getElementById('branchPickerCloseBtn').addEventListener('click', ()=>{
 });
 
 initBranchPicker();
+
+// On page load, check for a saved customer login and silently restore it
+// if the token is still valid — keeps a shopper logged in across a refresh.
+async function tryRestoreCustomerSession(){
+  let storedToken;
+  try{
+    storedToken = localStorage.getItem('uchumi_customer_token');
+  }catch(e){ return; }
+  if(!storedToken) return;
+
+  try{
+    const res = await fetch(API_BASE + '/api/customer-auth/me', {
+      headers: { 'Authorization': 'Bearer ' + storedToken }
+    });
+    if(!res.ok){
+      try{ localStorage.removeItem('uchumi_customer_token'); }catch(e){}
+      return;
+    }
+    const customer = await res.json();
+    CUSTOMER_TOKEN = storedToken;
+    CUSTOMER_INFO = customer;
+    updateAccountButton();
+  }catch(e){
+    // Backend unreachable right now — leave the saved token alone rather
+    // than deleting a session that might still be valid once it responds.
+  }
+}
+tryRestoreCustomerSession();
 
 // If this page was opened from a password-reset email link, it'll have
 // ?reset_token=... in the URL — open straight to the "set new password" screen.
