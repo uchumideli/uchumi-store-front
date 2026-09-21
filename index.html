@@ -182,6 +182,26 @@
   .account-btn:hover{border-color:var(--red);background:var(--flour);}
 
   /* ---- hero ---- */
+  .announcement-ticker{
+    background:var(--red);
+    color:#fff;
+    text-align:center;
+    padding:10px 16px;
+    font-size:13.5px;
+    font-weight:600;
+    letter-spacing:0.2px;
+    overflow:hidden;
+  }
+  .announcement-text{
+    display:inline-block;
+    opacity:1;
+    transform:translateY(0);
+    transition:opacity 0.45s ease, transform 0.45s ease;
+  }
+  .announcement-text.fade-out{
+    opacity:0;
+    transform:translateY(-8px);
+  }
   .hero{
     background:var(--paper);
     padding:40px 20px;
@@ -1010,6 +1030,10 @@
   <button class="cart-btn" id="openCartBtn">🛒 Cart · <span id="cartCount">0</span></button>
 </div>
 
+<div class="announcement-ticker" id="announcementTicker" style="display:none;">
+  <span class="announcement-text" id="announcementText"></span>
+</div>
+
 <div class="hero">
   <div>
     <h1 class="display">Groceries delivered <span class="accent">to your door.</span></h1>
@@ -1511,6 +1535,44 @@ async function loadHeroBanners(){
   }catch(e){
     // Falls back to the hardcoded PROMO_SLIDES below if this fails or is empty.
   }
+}
+
+/* ---- announcement ticker: red strip above the hero headline, cycling
+   through short messages with a fade in/out animation ---- */
+let ANNOUNCEMENTS = [];
+let announcementIndex = 0;
+
+async function loadAnnouncements(){
+  try{
+    const res = await fetch(API_BASE + '/api/announcements');
+    if(res.ok){
+      const data = await res.json();
+      if(Array.isArray(data) && data.length){
+        ANNOUNCEMENTS = data;
+        startAnnouncementTicker();
+      }
+    }
+  }catch(e){
+    // No backend reachable right now — the ticker just stays hidden,
+    // it's decorative, not critical to browsing or checking out.
+  }
+}
+
+function startAnnouncementTicker(){
+  if(!ANNOUNCEMENTS.length) return;
+  const ticker = document.getElementById('announcementTicker');
+  const textEl = document.getElementById('announcementText');
+  ticker.style.display = 'block';
+  textEl.textContent = ANNOUNCEMENTS[0].message;
+
+  setInterval(()=>{
+    textEl.classList.add('fade-out');
+    setTimeout(()=>{
+      announcementIndex = (announcementIndex + 1) % ANNOUNCEMENTS.length;
+      textEl.textContent = ANNOUNCEMENTS[announcementIndex].message;
+      textEl.classList.remove('fade-out');
+    }, 450); // matches the CSS transition duration, so the swap happens invisibly mid-fade
+  }, 4000);
 }
 
 function bannerCardHtml(banner){
@@ -2445,7 +2507,7 @@ async function initBranchPicker(){
   // Branches and promo banners don't depend on each other — fetch them all
   // at once instead of one after another. Products still has to wait, since
   // it needs to know which branch was selected first.
-  await Promise.all([loadBranches(), loadPromoBanners(), loadHeroBanners()]);
+  await Promise.all([loadBranches(), loadPromoBanners(), loadHeroBanners(), loadAnnouncements()]);
 
   // If they picked a branch on a previous visit, remember it and skip
   // asking again — same idea as staying logged in across a refresh.
