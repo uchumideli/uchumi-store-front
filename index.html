@@ -2407,6 +2407,7 @@ function selectBranch(branchId){
   const branch = BRANCHES.find(b => b.id === branchId);
   if(!branch) return;
   SELECTED_BRANCH = branch;
+  try{ localStorage.setItem('uchumi_selected_branch_id', String(branch.id)); }catch(e){}
   document.getElementById('branchPickerOverlay').classList.remove('open');
   loadLiveProducts();
 }
@@ -2445,18 +2446,31 @@ async function initBranchPicker(){
   // at once instead of one after another. Products still has to wait, since
   // it needs to know which branch was selected first.
   await Promise.all([loadBranches(), loadPromoBanners(), loadHeroBanners()]);
-  // Default to the first branch so the page has real content behind the
-  // small picker card, instead of sitting empty until a choice is made.
-  if(BRANCHES.length && !SELECTED_BRANCH){
+
+  // If they picked a branch on a previous visit, remember it and skip
+  // asking again — same idea as staying logged in across a refresh.
+  let rememberedBranchId = null;
+  try{ rememberedBranchId = localStorage.getItem('uchumi_selected_branch_id'); }catch(e){}
+  const remembered = rememberedBranchId ? BRANCHES.find(b => String(b.id) === rememberedBranchId) : null;
+
+  if(remembered){
+    SELECTED_BRANCH = remembered;
+  } else if(BRANCHES.length && !SELECTED_BRANCH){
+    // Default to the first branch so the page has real content behind the
+    // small picker card, instead of sitting empty until a choice is made.
     SELECTED_BRANCH = BRANCHES[0];
   }
+
   await loadLiveProducts();
   renderBranchPickerList();
-  // Let the page open and settle first — the location prompt appears gently
-  // a few seconds later instead of blocking the very first thing anyone sees.
-  setTimeout(()=>{
-    document.getElementById('branchPickerOverlay').classList.add('open');
-  }, 3500);
+
+  if(!remembered){
+    // No remembered branch — this is either a first visit or they cleared
+    // it, so gently prompt for one, same as before.
+    setTimeout(()=>{
+      document.getElementById('branchPickerOverlay').classList.add('open');
+    }, 3500);
+  }
 }
 
 document.getElementById('branchPickerCloseBtn').addEventListener('click', ()=>{
